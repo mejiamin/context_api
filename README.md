@@ -27,11 +27,11 @@ npm run dev
 
 ### Вот наш план:
 
-#### 👉 Урок 1: Основы и строгая типизация
+#### Урок 1: Основы и строгая типизация
 
 Как создать контекст, обернуть приложение в `Provider` и получить данные через `useContext`. Мы сразу разберем, как правильно описывать интерфейсы для контекста в TypeScript (включая проблему значения по умолчанию — `null` vs `undefined`).
 
-#### Урок 2: Динамический контекст и Custom Provider
+#### 👉 Урок 2: Динамический контекст и Custom Provider
 
 Как передавать не только статические данные, но и функции для их изменения (например, `theme` и `toggleTheme`). Мы создадим отдельный компонент-провайдер и напишем кастомный хук (например, `useTheme`), чтобы инкапсулировать логику и избежать ошибок типизации в компонентах.
 
@@ -48,87 +48,119 @@ npm run dev
 Соберем небольшую фичу в твоем окружении, объединив всё вместе. Напишем глобальную систему уведомлений (Toasts) или корзину, стилизованную через твои CSS Modules, чтобы закрепить материал в условиях реального продакшена.
 
 ---
-## Урок 1: Основы и строгая типизация
 
-Суть Context API проста: он позволяет передавать данные глубоко по дереву компонентов, минуя промежуточные слои (избавляет от так называемого *prop drilling*).
+## Урок 2: Динамический контекст и Custom Provider
 
-В TypeScript главная сложность Context API — это строгая типизация начального значения. Давай разберем это на примере профиля пользователя.
+В первом уроке мы передавали статические данные. Но в реальных приложениях данные меняются (пользователь логинится, товары добавляются в корзину, меняется тема оформления).
 
-### Шаг 1: Создание контекста и типов
+Когда мы добавляем изменение состояния (`useState`), писать логику прямо в `App.tsx` становится плохой идеей — компонент `App` быстро превратится в свалку. Кроме того, писать `if (!context)` в каждом компоненте, где мы читаем данные, очень утомляет.
 
-Создай папку `context` внутри `src`, а в ней файл `UserContext.ts`. Здесь мы опишем форму наших данных и создадим сам объект контекста.
+Решение: **Custom Provider** (Кастомный провайдер) и **Custom Hook** (Кастомный хук).
+Давай разберем это на классическом примере переключения светлой и темной темы.
 
-```typescript
-import { createContext } from 'react';
+### Шаг 1: Всё в одном файле (Context, Provider и Hook)
 
-// 1. Описываем интерфейс наших данных
-export interface User {
-  name: string;
-  role: 'admin' | 'user';
-}
-
-// 2. Создаем контекст. 
-// При создании React требует передать дефолтное значение. 
-// Так как до монтирования провайдера у нас нет реального юзера, мы передаем undefined.
-// Поэтому тип контекста: User ИЛИ undefined.
-export const UserContext = createContext<User | undefined>(undefined);
-```
-
-### Шаг 2: Обертка в Provider
-
-Теперь нам нужно обернуть ту часть приложения, которой нужны эти данные, в компонент `Provider`. Откроем `App.tsx` (или где у тебя корневой компонент).
+Создай файл `ThemeContext.tsx` в папке `context`. Мы соберем всю логику темы в одном месте.
 
 ```tsx
-import { UserContext, User } from './context/UserContext';
-import Profile from './components/Profile'; 
+import { createContext, useState, useContext, ReactNode } from 'react';
 
-function App() {
-  // Пока захардкодим статичные данные. В реальном приложении 
-  // они пришли бы с бэкенда через useEffect или React Query.
-  const currentUser: User = { 
-    name: 'Амин', 
-    role: 'admin' 
+// 1. Описываем типы
+type Theme = 'light' | 'dark';
+
+interface ThemeContextType {
+  theme: Theme;
+  toggleTheme: () => void; // Функция для изменения стейта
+}
+
+// 2. Создаем контекст (экспортировать его больше 
+// не нужно, он будет скрыт внутри файла!)
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+// 3. Создаем Custom Provider
+// Он будет хранить состояние и отдавать его дочерним компонентам
+interface ThemeProviderProps {
+  children: ReactNode; // Тип для вложенных компонентов в React
+}
+
+export const ThemeProvider = ({ children }: ThemeProviderProps) => {
+  const [theme, setTheme] = useState<Theme>('light');
+
+  const toggleTheme = () => {
+    setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
   };
 
   return (
-    // Передаем объект currentUser в проп value. 
-    // Все дети внутри Provider получат к нему доступ.
-    <UserContext.Provider value={currentUser}>
-      <div className="app-container">
-        <h1>Панель управления</h1>
-        <Profile />
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+// 4. Создаем Custom Hook для удобного чтения контекста
+export const useTheme = () => {
+  const context = useContext(ThemeContext);
+  
+  // Прячем проверку на undefined внутрь хука!
+  // Теперь компоненты будут получать уже 100% валидные данные.
+  if (!context) {
+    throw new Error(
+      'useTheme должен использоваться только внутри ThemeProvider'
+    );
+  }
+  
+  return context;
+};
+```
+
+**В чем магия хука `useTheme`?** Нам больше не нужно импортировать `useContext` и сам `ThemeContext` в наши компоненты. Мы просто вызовем `useTheme()`, и TypeScript сразу поймет, что там есть `theme` и `toggleTheme`.
+
+### Шаг 2: Обертка приложения
+
+Теперь наш `App.tsx` выглядит гораздо чище. Нам не нужно держать тут `useState`.
+
+```tsx
+import { ThemeProvider } from './context/ThemeContext';
+import ThemeToggler from './components/ThemeToggler';
+
+function App() {
+  return (
+    // Оборачиваем приложение в наш кастомный провайдер
+    <ThemeProvider>
+      <div style={{ padding: '20px' }}>
+        <h1>Урок 2: Динамический контекст</h1>
+        <ThemeToggler />
       </div>
-    </UserContext.Provider>
+    </ThemeProvider>
   );
 }
 
 export default App;
+
 ```
 
-### Шаг 3: Чтение контекста через useContext
+### Шаг 3: Используем контекст в компоненте
 
-Создай компонент `Profile.tsx`. Обрати внимание, как TypeScript заставляет нас быть безопасными.
+Создай компонент `ThemeToggler.tsx` и файл стилей `ThemeToggler.module.css`.
+
+**`ThemeToggler.tsx`:**
 
 ```tsx
-import { useContext } from 'react';
-import { UserContext } from '../context/UserContext';
-import styles from './Profile.module.css'; 
+import { useTheme } from '../context/ThemeContext';
+import styles from './ThemeToggler.module.css';
 
-export default function Profile() {
-  // Читаем данные из контекста
-  const user = useContext(UserContext);
-
-  // Важный момент TypeScript: так как при создании контекста 
-  // мы указали <User | undefined>, TS заставит нас проверить это.
-  // Это защищает нас от ошибки, если мы забудем обернуть компонент в Provider.
-  if (!user) {
-    return <div>Ошибка: Компонент должен быть внутри UserContext.Provider</div>;
-  }
+export default function ThemeToggler() {
+  // Смотри, как чисто! Никаких проверок на undefined.
+  const { theme, toggleTheme } = useTheme();
 
   return (
-    <div className={styles.profileCard}>
-      <h2>Привет, {user.name}!</h2>
-      <p>Твой уровень доступа: {user.role}</p>
+    <div className={`
+      ${styles.box} ${theme === 'dark' ? styles.dark : styles.light}
+    `}>
+      <p>Текущая тема: <strong>{theme}</strong></p>
+      <button onClick={toggleTheme} className={styles.button}>
+        Переключить тему
+      </button>
     </div>
   );
 }
@@ -136,8 +168,10 @@ export default function Profile() {
 
 ---
 
-**Твое задание для Урока 1:**
+**Твое задание для Урока 2:**
 
-1. Создай эти два файла (`UserContext.ts` и `Profile.tsx`).
-2. Подключи их в `App.tsx` и убедись, что данные успешно отображаются на экране.
-3. Попробуй закомментировать `UserContext.Provider` в `App.tsx` (оставь только `<Profile/>`) — посмотри, как сработает наша TS-проверка `if (!user)` и выведет ошибку на экран.
+1. Создай `ThemeContext.tsx` с провайдером и хуком.
+2. Создай компонент с кнопкой и подключи стили.
+3. Оберни `App` в `<ThemeProvider>` и покликай на кнопку — тема должна плавно переключаться!
+
+Паттерн "Кастомный Провайдер + Кастомный Хук" — это **золотой стандарт** работы с Context API в React (ты будешь использовать его в 99% случаев).

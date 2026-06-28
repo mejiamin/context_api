@@ -1,1 +1,1 @@
-export { Profile } from "./profile/Profile";
+export { ThemeToggler } from "./themeToggler/ThemeToggler";
