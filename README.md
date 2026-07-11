@@ -31,11 +31,11 @@ npm run dev
 
 Как создать контекст, обернуть приложение в `Provider` и получить данные через `useContext`. Мы сразу разберем, как правильно описывать интерфейсы для контекста в TypeScript (включая проблему значения по умолчанию — `null` vs `undefined`).
 
-#### 👉 Урок 2: Динамический контекст и Custom Provider
+#### Урок 2: Динамический контекст и Custom Provider
 
 Как передавать не только статические данные, но и функции для их изменения (например, `theme` и `toggleTheme`). Мы создадим отдельный компонент-провайдер и напишем кастомный хук (например, `useTheme`), чтобы инкапсулировать логику и избежать ошибок типизации в компонентах.
 
-#### Урок 3: Связка Context API + useReducer
+#### 👉 Урок 3: Связка Context API + useReducer
 
 Когда `useState` перестает справляться. Мы интегрируем `useReducer` внутрь нашего провайдера для управления сложным состоянием (например, состоянием авторизации или корзины покупок) и типизируем все `actions` и `dispatch`.
 
@@ -49,118 +49,176 @@ npm run dev
 
 ---
 
-## Урок 2: Динамический контекст и Custom Provider
+## Урок 3: Связка Context API + useReducer
 
-В первом уроке мы передавали статические данные. Но в реальных приложениях данные меняются (пользователь логинится, товары добавляются в корзину, меняется тема оформления).
+Теперь мы переходим к более сложным вещам.
 
-Когда мы добавляем изменение состояния (`useState`), писать логику прямо в `App.tsx` становится плохой идеей — компонент `App` быстро превратится в свалку. Кроме того, писать `if (!context)` в каждом компоненте, где мы читаем данные, очень утомляет.
+Когда состояние становится запутанным (например, оно представляет собой объект с массивами внутри, и разные действия обновляют разные части этого объекта), обычный `useState` превращается в кошмар. Здесь на помощь приходит `useReducer` в связке с Context API.
 
-Решение: **Custom Provider** (Кастомный провайдер) и **Custom Hook** (Кастомный хук).
-Давай разберем это на классическом примере переключения светлой и темной темы.
+По сути, мы сейчас соберем **мини-Redux**, встроенный прямо в React, с идеальной поддержкой TypeScript.
 
-### Шаг 1: Всё в одном файле (Context, Provider и Hook)
+Давай создадим простую корзину покупок.
 
-Создай файл `ThemeContext.tsx` в папке `context`. Мы соберем всю логику темы в одном месте.
+## Шаг 1: Типы и Reducer
+
+Создай файл `CartContext.tsx` в папке `context`. Сначала мы опишем форму наших данных и все возможные действия (экшены), которые могут с ними происходить. В TypeScript это делается через *Discriminated Unions* (размеченные объединения) — это невероятно мощная штука.
 
 ```tsx
-import { createContext, useState, useContext, ReactNode } from 'react';
+import { createContext, useReducer, useContext, ReactNode } from 'react';
 
-// 1. Описываем типы
-type Theme = 'light' | 'dark';
-
-interface ThemeContextType {
-  theme: Theme;
-  toggleTheme: () => void; // Функция для изменения стейта
+// 1. Описываем типы данных
+export interface Product {
+  id: number;
+  name: string;
+  price: number;
 }
 
-// 2. Создаем контекст (экспортировать его больше 
-// не нужно, он будет скрыт внутри файла!)
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-
-// 3. Создаем Custom Provider
-// Он будет хранить состояние и отдавать его дочерним компонентам
-interface ThemeProviderProps {
-  children: ReactNode; // Тип для вложенных компонентов в React
+interface CartState {
+  items: Product[];
+  total: number;
 }
 
-export const ThemeProvider = ({ children }: ThemeProviderProps) => {
-  const [theme, setTheme] = useState<Theme>('light');
+// 2. Описываем ВСЕ возможные действия в системе.
+// TypeScript будет строго следить,
+// чтобы мы не передали payload туда, где его нет.
+type CartAction =
+  | { type: 'ADD_ITEM'; payload: Product }
+  | { type: 'REMOVE_ITEM'; payload: { id: number } }
+  | { type: 'CLEAR_CART' };
 
-  const toggleTheme = () => {
-    setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
-  };
+// 3. Начальное состояние
+const initialState: CartState = {
+  items: [],
+  total: 0,
+};
+
+// 4. Пишем сам Reducer — чистую функцию,
+// которая принимает старый State и Action, 
+// а возвращает новый State.
+function cartReducer(state: CartState, action: CartAction): CartState {
+  switch (action.type) {
+    case 'ADD_ITEM':
+      return {
+        ...state,
+        items: [...state.items, action.payload],
+        total: state.total + action.payload.price,
+      };
+    case 'REMOVE_ITEM':
+      const itemToRemove = state.items.find(
+        (item) => item.id === action.payload.id
+      );
+      if (!itemToRemove) return state;
+      return {
+        ...state,
+        items: state.items.filter((item) => item.id !== action.payload.id),
+        total: state.total - itemToRemove.price,
+      };
+    case 'CLEAR_CART':
+      return initialState;
+    default:
+      return state;
+  }
+}
+```
+
+## Шаг 2: Создание Контекста, Провайдера и Хука
+
+В этом же файле `CartContext.tsx` добавляем уже знакомый нам паттерн из Урока 2. Только вместо `theme` и `toggleTheme` мы будем передавать `state` и функцию `dispatch`.
+
+```tsx
+// 5. Типизируем значение контекста
+interface CartContextType {
+  state: CartState;
+  
+  // Типизация встроенного dispatch из React
+  dispatch: React.Dispatch<CartAction>;
+}
+
+const CartContext = createContext<CartContextType | undefined>(undefined);
+
+// 6. Создаем Провайдер
+export const CartProvider = ({ children }: { children: ReactNode }) => {
+  // Используем useReducer вместо useState
+  const [state, dispatch] = useReducer(cartReducer, initialState);
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <CartContext.Provider value={{ state, dispatch }}>
       {children}
-    </ThemeContext.Provider>
+    </CartContext.Provider>
   );
 };
 
-// 4. Создаем Custom Hook для удобного чтения контекста
-export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  
-  // Прячем проверку на undefined внутрь хука!
-  // Теперь компоненты будут получать уже 100% валидные данные.
+// 7. Создаем наш кастомный хук
+export const useCart = () => {
+  const context = useContext(CartContext);
   if (!context) {
-    throw new Error(
-      'useTheme должен использоваться только внутри ThemeProvider'
-    );
+    throw new Error('useCart должен использоваться внутри CartProvider');
   }
-  
   return context;
 };
 ```
 
-**В чем магия хука `useTheme`?** Нам больше не нужно импортировать `useContext` и сам `ThemeContext` в наши компоненты. Мы просто вызовем `useTheme()`, и TypeScript сразу поймет, что там есть `theme` и `toggleTheme`.
+## Шаг 3: Использование в компоненте
 
-### Шаг 2: Обертка приложения
+Оберни свой `App.tsx` в `<CartProvider>` (можешь положить его прямо внутрь `<ThemeProvider>`, они отлично работают вместе).
 
-Теперь наш `App.tsx` выглядит гораздо чище. Нам не нужно держать тут `useState`.
+Теперь создадим компонент `Cart.tsx` и файл стилей `Cart.module.css`.
+
+**`Cart.tsx`:**
 
 ```tsx
-import { ThemeProvider } from './context/ThemeContext';
-import ThemeToggler from './components/ThemeToggler';
+import { useCart, Product } from '../context/CartContext';
+import styles from './Cart.module.css';
 
-function App() {
+const MOCK_PRODUCTS: Product[] = [
+  { id: 1, name: 'React Клавиатура', price: 100 },
+  { id: 2, name: 'Vite Мышь', price: 50 },
+];
+
+export default function Cart() {
+  // Достаем state и dispatch из контекста
+  const { state, dispatch } = useCart();
+
   return (
-    // Оборачиваем приложение в наш кастомный провайдер
-    <ThemeProvider>
-      <div style={{ padding: '20px' }}>
-        <h1>Урок 2: Динамический контекст</h1>
-        <ThemeToggler />
+    <div className={styles.container}>
+      <h2>Магазин</h2>
+      <div className={styles.products}>
+        {MOCK_PRODUCTS.map((product) => (
+          <button
+            key={product.id}
+            className={styles.button}
+            // Вызываем dispatch с нужным action! TS подскажет все поля.
+            onClick={() => dispatch({ type: 'ADD_ITEM', payload: product })}
+          >
+            Купить {product.name} (${product.price})
+          </button>
+        ))}
       </div>
-    </ThemeProvider>
-  );
-}
 
-export default App;
-
-```
-
-### Шаг 3: Используем контекст в компоненте
-
-Создай компонент `ThemeToggler.tsx` и файл стилей `ThemeToggler.module.css`.
-
-**`ThemeToggler.tsx`:**
-
-```tsx
-import { useTheme } from '../context/ThemeContext';
-import styles from './ThemeToggler.module.css';
-
-export default function ThemeToggler() {
-  // Смотри, как чисто! Никаких проверок на undefined.
-  const { theme, toggleTheme } = useTheme();
-
-  return (
-    <div className={`
-      ${styles.box} ${theme === 'dark' ? styles.dark : styles.light}
-    `}>
-      <p>Текущая тема: <strong>{theme}</strong></p>
-      <button onClick={toggleTheme} className={styles.button}>
-        Переключить тему
-      </button>
+      <div className={styles.cart}>
+        <h3>Корзина ({state.items.length} товаров)</h3>
+        <ul>
+          {state.items.map((item, index) => (
+            <li key={index} className={styles.cartItem}>
+              {item.name} - ${item.price}
+              <button
+                className={styles.deleteButton}
+                onClick={() => dispatch({ 
+                  type: 'REMOVE_ITEM', payload: { id: item.id } 
+                })}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className={styles.footer}>
+          <strong>Итого: ${state.total}</strong>
+          <button onClick={() => dispatch({ type: 'CLEAR_CART' })}>
+            Очистить
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -168,10 +226,8 @@ export default function ThemeToggler() {
 
 ---
 
-**Твое задание для Урока 2:**
+**Твое задание для Урока 3:**
 
-1. Создай `ThemeContext.tsx` с провайдером и хуком.
-2. Создай компонент с кнопкой и подключи стили.
-3. Оберни `App` в `<ThemeProvider>` и покликай на кнопку — тема должна плавно переключаться!
-
-Паттерн "Кастомный Провайдер + Кастомный Хук" — это **золотой стандарт** работы с Context API в React (ты будешь использовать его в 99% случаев).
+1. Создай `CartContext.tsx` и внимательно изучи, как TypeScript проверяет `action.type` внутри `switch`. Попробуй сделать опечатку в `type: 'ADD_ITEM'` и посмотри, как TS сразу укажет на ошибку.
+2. Создай компонент `Cart` и стили.
+3. Добавь `CartProvider` в `App.tsx` и выведи компонент `<Cart />`. Проверь, как добавляются и удаляются товары, и как обновляется итоговая сумма.
