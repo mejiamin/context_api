@@ -1,12 +1,10 @@
-import { Profile } from "@/components"
+import { ThemeToggler } from "@/components"
 
 export const App = () => {
-  
-
   return (
-    <div className="app-container">
-      <h1>Панель управления</h1>
-      <Profile />
+    <div style={{ padding: '20px' }}>
+      <h1>Урок 2: Динамический контекст</h1>
+      <ThemeToggler />
     </div>
   )
 }
