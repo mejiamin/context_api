@@ -35,11 +35,11 @@ npm run dev
 
 Как передавать не только статические данные, но и функции для их изменения (например, `theme` и `toggleTheme`). Мы создадим отдельный компонент-провайдер и напишем кастомный хук (например, `useTheme`), чтобы инкапсулировать логику и избежать ошибок типизации в компонентах.
 
-#### 👉 Урок 3: Связка Context API + useReducer
+#### Урок 3: Связка Context API + useReducer
 
 Когда `useState` перестает справляться. Мы интегрируем `useReducer` внутрь нашего провайдера для управления сложным состоянием (например, состоянием авторизации или корзины покупок) и типизируем все `actions` и `dispatch`.
 
-#### Урок 4: Оптимизация производительности и рендеров
+#### 👉 Урок 4: Оптимизация производительности и рендеров
 
 Главный минус Context API — лишние рендеры всех дочерних компонентов при изменении контекста. Мы разберем, как этого избежать: разделение одного контекста на два (State Context и Dispatch Context) и использование `useMemo`.
 
@@ -49,185 +49,100 @@ npm run dev
 
 ---
 
-## Урок 3: Связка Context API + useReducer
+## Урок 4: Оптимизация производительности и рендеров
 
-Теперь мы переходим к более сложным вещам.
+Главный минус Context API кроется в его механизме обновлений: **каждый раз, когда меняется `value` в Provider, перерисовываются ВСЕ дочерние компоненты, которые используют этот контекст.**
 
-Когда состояние становится запутанным (например, оно представляет собой объект с массивами внутри, и разные действия обновляют разные части этого объекта), обычный `useState` превращается в кошмар. Здесь на помощь приходит `useReducer` в связке с Context API.
+В нашем Уроке 3 мы передавали в `value` единый объект: `value={{ state, dispatch }}`.
+Посмотри, что происходит при добавлении товара:
 
-По сути, мы сейчас соберем **мини-Redux**, встроенный прямо в React, с идеальной поддержкой TypeScript.
+1. Вызывается `dispatch`.
+2. `state` меняется.
+3. Провайдер создает *совершенно новый* объект `{ state, dispatch }`.
+4. React видит новое значение и перерендеривает всё, что вызывает `useCart()` — даже ту кнопку, которой нужен только `dispatch`, чтобы отправить экшен.
 
-Давай создадим простую корзину покупок.
+В масштабах реального приложения это сильно бьет по производительности. Решение, которое стало стандартом в React-разработке — **разделить контекст на два независимых**.
 
-## Шаг 1: Типы и Reducer
+### Шаг 1: Создаем два контекста вместо одного
 
-Создай файл `CartContext.tsx` в папке `context`. Сначала мы опишем форму наших данных и все возможные действия (экшены), которые могут с ними происходить. В TypeScript это делается через *Discriminated Unions* (размеченные объединения) — это невероятно мощная штука.
+Открой свой `CartContext.tsx` и замени один общий контекст на `StateContext` и `DispatchContext`.
 
 ```tsx
-import { createContext, useReducer, useContext, ReactNode } from 'react';
+// Типы Product, CartState, CartAction и саму функцию cartReducer 
+// оставляем без изменений, они написаны идеально!
 
-// 1. Описываем типы данных
-export interface Product {
-  id: number;
-  name: string;
-  price: number;
-}
+// 1. Создаем ДВА раздельных контекста
+const CartStateContext = createContext<CartState | undefined>(undefined);
 
-interface CartState {
-  items: Product[];
-  total: number;
-}
-
-// 2. Описываем ВСЕ возможные действия в системе.
-// TypeScript будет строго следить,
-// чтобы мы не передали payload туда, где его нет.
-type CartAction =
-  | { type: 'ADD_ITEM'; payload: Product }
-  | { type: 'REMOVE_ITEM'; payload: { id: number } }
-  | { type: 'CLEAR_CART' };
-
-// 3. Начальное состояние
-const initialState: CartState = {
-  items: [],
-  total: 0,
-};
-
-// 4. Пишем сам Reducer — чистую функцию,
-// которая принимает старый State и Action, 
-// а возвращает новый State.
-function cartReducer(state: CartState, action: CartAction): CartState {
-  switch (action.type) {
-    case 'ADD_ITEM':
-      return {
-        ...state,
-        items: [...state.items, action.payload],
-        total: state.total + action.payload.price,
-      };
-    case 'REMOVE_ITEM':
-      const itemToRemove = state.items.find(
-        (item) => item.id === action.payload.id
-      );
-      if (!itemToRemove) return state;
-      return {
-        ...state,
-        items: state.items.filter((item) => item.id !== action.payload.id),
-        total: state.total - itemToRemove.price,
-      };
-    case 'CLEAR_CART':
-      return initialState;
-    default:
-      return state;
-  }
-}
+// Тип для dispatch берем прямо из React
+const CartDispatchContext = 
+  createContext<React.Dispatch<CartAction> | undefined>(undefined);
 ```
 
-## Шаг 2: Создание Контекста, Провайдера и Хука
+### Шаг 2: Вкладываем провайдеры друг в друга
 
-В этом же файле `CartContext.tsx` добавляем уже знакомый нам паттерн из Урока 2. Только вместо `theme` и `toggleTheme` мы будем передавать `state` и функцию `dispatch`.
+Теперь обновим компонент `CartProvider`.
+В React функция `dispatch` от хука `useReducer` **никогда не меняет свою ссылку** (она стабильна на протяжении всей жизни компонента). Это значит, что `CartDispatchContext` больше никогда не спровоцирует лишних рендеров!
 
 ```tsx
-// 5. Типизируем значение контекста
-interface CartContextType {
-  state: CartState;
-  
-  // Типизация встроенного dispatch из React
-  dispatch: React.Dispatch<CartAction>;
-}
-
-const CartContext = createContext<CartContextType | undefined>(undefined);
-
-// 6. Создаем Провайдер
 export const CartProvider = ({ children }: { children: ReactNode }) => {
-  // Используем useReducer вместо useState
   const [state, dispatch] = useReducer(cartReducer, initialState);
 
   return (
-    <CartContext.Provider value={{ state, dispatch }}>
-      {children}
-    </CartContext.Provider>
+    {/* Провайдер состояния будет вызывать рендеры 
+    только при изменении стейта */}
+    <CartStateContext.Provider value={state}>
+      {/* Провайдер диспетчера всегда стабилен */}
+      <CartDispatchContext.Provider value={dispatch}>
+        {children}
+      </CartDispatchContext.Provider>
+    </CartStateContext.Provider>
   );
 };
+```
 
-// 7. Создаем наш кастомный хук
-export const useCart = () => {
-  const context = useContext(CartContext);
+### Шаг 3: Разделяем кастомные хуки
+
+Вместо одного `useCart` мы делаем два узконаправленных хука. Так компоненты смогут подписываться только на то, что им действительно нужно.
+
+```tsx
+// Хук только для чтения данных (вызовет рендер при изменении корзины)
+export const useCartState = () => {
+  const context = useContext(CartStateContext);
   if (!context) {
-    throw new Error('useCart должен использоваться внутри CartProvider');
+    throw new Error('useCartState должен быть внутри CartProvider')
+  }
+  return context;
+};
+
+// Хук только для действий (НЕ вызовет рендер при обновлении стейта!)
+export const useCartDispatch = () => {
+  const context = useContext(CartDispatchContext);
+  if (!context) {
+    throw new Error('useCartDispatch должен быть внутри CartProvider')
   }
   return context;
 };
 ```
 
-## Шаг 3: Использование в компоненте
+### Шаг 4: Применяем в компонентах
 
-Оберни свой `App.tsx` в `<CartProvider>` (можешь положить его прямо внутрь `<ThemeProvider>`, они отлично работают вместе).
-
-Теперь создадим компонент `Cart.tsx` и файл стилей `Cart.module.css`.
-
-**`Cart.tsx`:**
+Теперь в твоем `Cart.tsx` (или в любых других компонентах) ты берешь только то, что нужно:
 
 ```tsx
-import { useCart, Product } from '../context/CartContext';
-import styles from './Cart.module.css';
+// Где-то в компоненте со списком товаров:
+// Этот компонент больше НИКОГДА не перерисуется при изменении корзины!
+const dispatch = useCartDispatch();
 
-const MOCK_PRODUCTS: Product[] = [
-  { id: 1, name: 'React Клавиатура', price: 100 },
-  { id: 2, name: 'Vite Мышь', price: 50 },
-];
-
-export default function Cart() {
-  // Достаем state и dispatch из контекста
-  const { state, dispatch } = useCart();
-
-  return (
-    <div className={styles.container}>
-      <h2>Магазин</h2>
-      <div className={styles.products}>
-        {MOCK_PRODUCTS.map((product) => (
-          <button
-            key={product.id}
-            className={styles.button}
-            // Вызываем dispatch с нужным action! TS подскажет все поля.
-            onClick={() => dispatch({ type: 'ADD_ITEM', payload: product })}
-          >
-            Купить {product.name} (${product.price})
-          </button>
-        ))}
-      </div>
-
-      <div className={styles.cart}>
-        <h3>Корзина ({state.items.length} товаров)</h3>
-        <ul>
-          {state.items.map((item, index) => (
-            <li key={index} className={styles.cartItem}>
-              {item.name} - ${item.price}
-              <button
-                className={styles.deleteButton}
-                onClick={() => dispatch({ 
-                  type: 'REMOVE_ITEM', payload: { id: item.id } 
-                })}
-              >
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className={styles.footer}>
-          <strong>Итого: ${state.total}</strong>
-          <button onClick={() => dispatch({ type: 'CLEAR_CART' })}>
-            Очистить
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Где-то в компоненте самой корзины (справа сверху):
+// Этот компонент будет честно обновляться, когда меняется state.
+const state = useCartState();
 ```
 
 ---
 
-**Твое задание для Урока 3:**
+**Твое задание для Урока 4:**
 
-1. Создай `CartContext.tsx` и внимательно изучи, как TypeScript проверяет `action.type` внутри `switch`. Попробуй сделать опечатку в `type: 'ADD_ITEM'` и посмотри, как TS сразу укажет на ошибку.
-2. Создай компонент `Cart` и стили.
-3. Добавь `CartProvider` в `App.tsx` и выведи компонент `<Cart />`. Проверь, как добавляются и удаляются товары, и как обновляется итоговая сумма.
+1. Отрефактори `CartContext.tsx`: разбей его на два контекста и два хука.
+2. Обнови код в своем `Cart.tsx`: удали старый `useCart` и достань `state` и `dispatch` через новые раздельные хуки.
+3. Проверь в браузере. Визуально всё должно работать абсолютно так же, как и раньше, но знай: теперь под капотом архитектура оптимизирована по стандартам серьезного продакшена.

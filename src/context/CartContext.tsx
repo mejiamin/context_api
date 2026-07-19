@@ -1,28 +1,72 @@
+import type React from "react"
+import { createContext, useContext, useReducer, type ReactNode } from "react"
 
-// Шаг 1: Типы и Reducer
+export interface Product {
+  id: number
+  name: string
+  price: number
+}
 
-// 1. Описываем типы данных
+interface CartState {
+  items: Product[]
+  total: number
+}
 
+type CartAction =
+  | { type: 'ADD_ITEM'; payload: Product }
+  | { type: 'REMOVE_ITEM'; payload: { id: number } }
+  | { type: 'CLEAR_CART' }
 
-// 2. Описываем ВСЕ возможные действия в системе.
-// TypeScript будет строго следить, чтобы мы не передали payload туда, где его нет.
+const initialState: CartState = {
+  items: [],
+  total: 0,
+}
 
+function cartReducer(state: CartState, action: CartAction): CartState {
+  switch (action.type) {
+    case 'ADD_ITEM':
+      return {
+        ...state,
+        items: [...state.items, action.payload],
+        total: state.total + action.payload.price,
+      };
+    case 'REMOVE_ITEM':
+      const itemToRemove = state.items.find(item => item.id === action.payload.id)
+      if (!itemToRemove) return state
+      return {
+        ...state,
+        items: state.items.filter(item => item.id !== action.payload.id),
+        total: state.total - itemToRemove.price,
+      }
+    case 'CLEAR_CART':
+      return initialState
+    default:
+      return state
+  }
+}
 
-// 3. Начальное состояние
+interface CartContextType {
+  state: CartState
+  dispatch: React.Dispatch<CartAction>
+}
 
+const CartContext = createContext<CartContextType | undefined>(undefined)
 
-// 4. Пишем сам Reducer — чистую функцию, которая принимает старый State и Action, 
-// а возвращает новый State.
+export const CartProvider = ({ children }: { children: ReactNode }) => {
+  const [state, dispatch] = useReducer(cartReducer, initialState)
 
+  return (
+    <CartContext.Provider value={{ state, dispatch }}>
+      {children}
+    </CartContext.Provider>
+  );
+};
 
-
-// Шаг 2: Создание Контекста, Провайдера и Хука
-
-// 5. Типизируем значение контекста
-
-
-// 6. Создаем Провайдер
-
-
-// 7. Создаем наш кастомный хук
+export const useCart = () => {
+  const context = useContext(CartContext)
+  if (!context) {
+    throw new Error('useCart должен использоваться внутри CartProvider')
+  }
+  return context
+}
 
