@@ -27,7 +27,7 @@ npm run dev
 
 ### Вот наш план:
 
-#### 👉 Урок 1: Основы и строгая типизация
+#### Урок 1: Основы и строгая типизация
 
 Как создать контекст, обернуть приложение в `Provider` и получить данные через `useContext`. Мы сразу разберем, как правильно описывать интерфейсы для контекста в TypeScript (включая проблему значения по умолчанию — `null` vs `undefined`).
 
@@ -39,7 +39,7 @@ npm run dev
 
 Когда `useState` перестает справляться. Мы интегрируем `useReducer` внутрь нашего провайдера для управления сложным состоянием (например, состоянием авторизации или корзины покупок) и типизируем все `actions` и `dispatch`.
 
-#### Урок 4: Оптимизация производительности и рендеров
+#### 👉 Урок 4: Оптимизация производительности и рендеров
 
 Главный минус Context API — лишние рендеры всех дочерних компонентов при изменении контекста. Мы разберем, как этого избежать: разделение одного контекста на два (State Context и Dispatch Context) и использование `useMemo`.
 
@@ -48,96 +48,101 @@ npm run dev
 Соберем небольшую фичу в твоем окружении, объединив всё вместе. Напишем глобальную систему уведомлений (Toasts) или корзину, стилизованную через твои CSS Modules, чтобы закрепить материал в условиях реального продакшена.
 
 ---
-## Урок 1: Основы и строгая типизация
 
-Суть Context API проста: он позволяет передавать данные глубоко по дереву компонентов, минуя промежуточные слои (избавляет от так называемого *prop drilling*).
+## Урок 4: Оптимизация производительности и рендеров
 
-В TypeScript главная сложность Context API — это строгая типизация начального значения. Давай разберем это на примере профиля пользователя.
+Главный минус Context API кроется в его механизме обновлений: **каждый раз, когда меняется `value` в Provider, перерисовываются ВСЕ дочерние компоненты, которые используют этот контекст.**
 
-### Шаг 1: Создание контекста и типов
+В нашем Уроке 3 мы передавали в `value` единый объект: `value={{ state, dispatch }}`.
+Посмотри, что происходит при добавлении товара:
 
-Создай папку `context` внутри `src`, а в ней файл `UserContext.ts`. Здесь мы опишем форму наших данных и создадим сам объект контекста.
+1. Вызывается `dispatch`.
+2. `state` меняется.
+3. Провайдер создает *совершенно новый* объект `{ state, dispatch }`.
+4. React видит новое значение и перерендеривает всё, что вызывает `useCart()` — даже ту кнопку, которой нужен только `dispatch`, чтобы отправить экшен.
 
-```typescript
-import { createContext } from 'react';
+В масштабах реального приложения это сильно бьет по производительности. Решение, которое стало стандартом в React-разработке — **разделить контекст на два независимых**.
 
-// 1. Описываем интерфейс наших данных
-export interface User {
-  name: string;
-  role: 'admin' | 'user';
-}
+### Шаг 1: Создаем два контекста вместо одного
 
-// 2. Создаем контекст. 
-// При создании React требует передать дефолтное значение. 
-// Так как до монтирования провайдера у нас нет реального юзера, мы передаем undefined.
-// Поэтому тип контекста: User ИЛИ undefined.
-export const UserContext = createContext<User | undefined>(undefined);
-```
-
-### Шаг 2: Обертка в Provider
-
-Теперь нам нужно обернуть ту часть приложения, которой нужны эти данные, в компонент `Provider`. Откроем `App.tsx` (или где у тебя корневой компонент).
+Открой свой `CartContext.tsx` и замени один общий контекст на `StateContext` и `DispatchContext`.
 
 ```tsx
-import { UserContext, User } from './context/UserContext';
-import Profile from './components/Profile'; 
+// Типы Product, CartState, CartAction и саму функцию cartReducer 
+// оставляем без изменений, они написаны идеально!
 
-function App() {
-  // Пока захардкодим статичные данные. В реальном приложении 
-  // они пришли бы с бэкенда через useEffect или React Query.
-  const currentUser: User = { 
-    name: 'Амин', 
-    role: 'admin' 
-  };
+// 1. Создаем ДВА раздельных контекста
+const CartStateContext = createContext<CartState | undefined>(undefined);
+
+// Тип для dispatch берем прямо из React
+const CartDispatchContext = 
+  createContext<React.Dispatch<CartAction> | undefined>(undefined);
+```
+
+### Шаг 2: Вкладываем провайдеры друг в друга
+
+Теперь обновим компонент `CartProvider`.
+В React функция `dispatch` от хука `useReducer` **никогда не меняет свою ссылку** (она стабильна на протяжении всей жизни компонента). Это значит, что `CartDispatchContext` больше никогда не спровоцирует лишних рендеров!
+
+```tsx
+export const CartProvider = ({ children }: { children: ReactNode }) => {
+  const [state, dispatch] = useReducer(cartReducer, initialState);
 
   return (
-    // Передаем объект currentUser в проп value. 
-    // Все дети внутри Provider получат к нему доступ.
-    <UserContext.Provider value={currentUser}>
-      <div className="app-container">
-        <h1>Панель управления</h1>
-        <Profile />
-      </div>
-    </UserContext.Provider>
+    {/* Провайдер состояния будет вызывать рендеры 
+    только при изменении стейта */}
+    <CartStateContext.Provider value={state}>
+      {/* Провайдер диспетчера всегда стабилен */}
+      <CartDispatchContext.Provider value={dispatch}>
+        {children}
+      </CartDispatchContext.Provider>
+    </CartStateContext.Provider>
   );
-}
-
-export default App;
+};
 ```
 
-### Шаг 3: Чтение контекста через useContext
+### Шаг 3: Разделяем кастомные хуки
 
-Создай компонент `Profile.tsx`. Обрати внимание, как TypeScript заставляет нас быть безопасными.
+Вместо одного `useCart` мы делаем два узконаправленных хука. Так компоненты смогут подписываться только на то, что им действительно нужно.
 
 ```tsx
-import { useContext } from 'react';
-import { UserContext } from '../context/UserContext';
-import styles from './Profile.module.css'; 
-
-export default function Profile() {
-  // Читаем данные из контекста
-  const user = useContext(UserContext);
-
-  // Важный момент TypeScript: так как при создании контекста 
-  // мы указали <User | undefined>, TS заставит нас проверить это.
-  // Это защищает нас от ошибки, если мы забудем обернуть компонент в Provider.
-  if (!user) {
-    return <div>Ошибка: Компонент должен быть внутри UserContext.Provider</div>;
+// Хук только для чтения данных (вызовет рендер при изменении корзины)
+export const useCartState = () => {
+  const context = useContext(CartStateContext);
+  if (!context) {
+    throw new Error('useCartState должен быть внутри CartProvider')
   }
+  return context;
+};
 
-  return (
-    <div className={styles.profileCard}>
-      <h2>Привет, {user.name}!</h2>
-      <p>Твой уровень доступа: {user.role}</p>
-    </div>
-  );
-}
+// Хук только для действий (НЕ вызовет рендер при обновлении стейта!)
+export const useCartDispatch = () => {
+  const context = useContext(CartDispatchContext);
+  if (!context) {
+    throw new Error('useCartDispatch должен быть внутри CartProvider')
+  }
+  return context;
+};
+```
+
+### Шаг 4: Применяем в компонентах
+
+Теперь в твоем `Cart.tsx` (или в любых других компонентах) ты берешь только то, что нужно:
+
+```tsx
+// Где-то в компоненте со списком товаров:
+// Этот компонент больше НИКОГДА не перерисуется при изменении корзины!
+const dispatch = useCartDispatch();
+
+// Где-то в компоненте самой корзины (справа сверху):
+// Этот компонент будет честно обновляться, когда меняется state.
+const state = useCartState();
 ```
 
 ---
 
-**Твое задание для Урока 1:**
+**Твое задание для Урока 4:**
 
-1. Создай эти два файла (`UserContext.ts` и `Profile.tsx`).
-2. Подключи их в `App.tsx` и убедись, что данные успешно отображаются на экране.
-3. Попробуй закомментировать `UserContext.Provider` в `App.tsx` (оставь только `<Profile/>`) — посмотри, как сработает наша TS-проверка `if (!user)` и выведет ошибку на экран.
+1. Отрефактори `CartContext.tsx`: разбей его на два контекста и два хука.
+2. Обнови код в своем `Cart.tsx`: удали старый `useCart` и достань `state` и `dispatch` через новые раздельные хуки.
+3. Проверь в браузере. Визуально всё должно работать абсолютно так же, как и раньше, но знай: теперь под капотом архитектура оптимизирована по стандартам серьезного продакшена.

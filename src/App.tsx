@@ -1,12 +1,10 @@
-import { Profile } from "@/components"
+import { Cart } from "@/components"
+import { CartProvider } from "./context"
 
 export const App = () => {
-  
-
   return (
-    <div className="app-container">
-      <h1>Панель управления</h1>
-      <Profile />
-    </div>
+    <CartProvider>
+      <Cart />
+    </CartProvider>
   )
 }
