@@ -1,1 +1,2 @@
-export { Profile } from "./profile/Profile";
+export { Cart } from "./cart/Cart"
+export { TestComponent } from "./test/TestComponent"

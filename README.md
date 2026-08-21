@@ -27,7 +27,7 @@ npm run dev
 
 ### Вот наш план:
 
-#### 👉 Урок 1: Основы и строгая типизация
+#### Урок 1: Основы и строгая типизация
 
 Как создать контекст, обернуть приложение в `Provider` и получить данные через `useContext`. Мы сразу разберем, как правильно описывать интерфейсы для контекста в TypeScript (включая проблему значения по умолчанию — `null` vs `undefined`).
 
@@ -43,92 +43,128 @@ npm run dev
 
 Главный минус Context API — лишние рендеры всех дочерних компонентов при изменении контекста. Мы разберем, как этого избежать: разделение одного контекста на два (State Context и Dispatch Context) и использование `useMemo`.
 
-#### Урок 5: Финальная практика (с CSS Modules)
+#### 👉 Урок 5: Финальная практика (с CSS Modules)
 
 Соберем небольшую фичу в твоем окружении, объединив всё вместе. Напишем глобальную систему уведомлений (Toasts) или корзину, стилизованную через твои CSS Modules, чтобы закрепить материал в условиях реального продакшена.
 
 ---
-## Урок 1: Основы и строгая типизация
 
-Суть Context API проста: он позволяет передавать данные глубоко по дереву компонентов, минуя промежуточные слои (избавляет от так называемого *prop drilling*).
+# Урок 5: Финальная практика (с CSS Modules)
 
-В TypeScript главная сложность Context API — это строгая типизация начального значения. Давай разберем это на примере профиля пользователя.
+Финал! Система уведомлений (Toasts) — это идеальная задача для Context API.
 
-### Шаг 1: Создание контекста и типов
+Уведомления должны вызываться из **любой** точки приложения (например, из корзины или профиля), но при этом отрисовываться на **самом верхнем уровне** (поверх всего контента).
 
-Создай папку `context` внутри `src`, а в ней файл `UserContext.ts`. Здесь мы опишем форму наших данных и создадим сам объект контекста.
+Мы применим знания об оптимизации: наш провайдер будет отдавать только одну функцию `addToast`, и мы обернем её в `useCallback`, чтобы её ссылка никогда не менялась и компоненты не перерисовывались впустую.
 
-```typescript
-import { createContext } from 'react';
+## Шаг 1: Создаем контекст и провайдер с логикой
 
-// 1. Описываем интерфейс наших данных
-export interface User {
-  name: string;
-  role: 'admin' | 'user';
-}
-
-// 2. Создаем контекст. 
-// При создании React требует передать дефолтное значение. 
-// Так как до монтирования провайдера у нас нет реального юзера, мы передаем undefined.
-// Поэтому тип контекста: User ИЛИ undefined.
-export const UserContext = createContext<User | undefined>(undefined);
-```
-
-### Шаг 2: Обертка в Provider
-
-Теперь нам нужно обернуть ту часть приложения, которой нужны эти данные, в компонент `Provider`. Откроем `App.tsx` (или где у тебя корневой компонент).
+Создай файл `ToastContext.tsx`. Здесь будет всё: типы, контекст, провайдер с состоянием и сам рендер всплывающих окон.
 
 ```tsx
-import { UserContext, User } from './context/UserContext';
-import Profile from './components/Profile'; 
+import { 
+  createContext, 
+  useContext, 
+  useState, 
+  useCallback, 
+  ReactNode } from 'react';
+import styles from './Toast.module.css';
 
-function App() {
-  // Пока захардкодим статичные данные. В реальном приложении 
-  // они пришли бы с бэкенда через useEffect или React Query.
-  const currentUser: User = { 
-    name: 'Амин', 
-    role: 'admin' 
-  };
+// 1. Типы для наших уведомлений
+export type ToastType = 'success' | 'error' | 'info';
+
+export interface ToastMessage {
+  id: number;
+  text: string;
+  type: ToastType;
+}
+
+// 2. В контекст мы передаем ТОЛЬКО функцию добавления. 
+// Компонентам не нужно знать обо всех текущих уведомлениях, 
+// им нужно только уметь их создавать.
+interface ToastContextType {
+  addToast: (text: string, type?: ToastType) => void;
+}
+
+const ToastContext = createContext<ToastContextType | undefined>(undefined);
+
+// 3. Провайдер
+export const ToastProvider = ({ children }: { children: ReactNode }) => {
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Используем useCallback, чтобы ссылка на функцию была стабильной
+  const addToast = useCallback((text: string, type: ToastType = 'info') => {
+    const id = Date.now();
+    
+    setToasts((prev) => [...prev, { id, text, type }]);
+
+    // Автоматически удаляем уведомление через 3 секунды
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, 3000);
+  }, []);
 
   return (
-    // Передаем объект currentUser в проп value. 
-    // Все дети внутри Provider получат к нему доступ.
-    <UserContext.Provider value={currentUser}>
-      <div className="app-container">
-        <h1>Панель управления</h1>
-        <Profile />
+    <ToastContext.Provider value={{ addToast }}>
+      {children}
+      
+      {/* 
+        Отрисовываем уведомления прямо в провайдере!
+        Они будут висеть поверх всех дочерних компонентов (children).
+      */}
+      <div className={styles.toastContainer}>
+        {toasts.map((toast) => (
+          <div 
+            key={toast.id} 
+            className={`${styles.toast} ${styles[toast.type]}`}
+          >
+            {toast.text}
+          </div>
+        ))}
       </div>
-    </UserContext.Provider>
+    </ToastContext.Provider>
   );
-}
+};
 
-export default App;
+// 4. Наш любимый кастомный хук
+export const useToast = () => {
+  const context = useContext(ToastContext);
+  if (!context) {
+    throw new Error('useToast должен использоваться внутри ToastProvider');
+  }
+  return context;
+};
 ```
 
-### Шаг 3: Чтение контекста через useContext
+## Шаг 2: Тестируем в бою!
 
-Создай компонент `Profile.tsx`. Обрати внимание, как TypeScript заставляет нас быть безопасными.
+Оберни свое приложение в `App.tsx` в `<ToastProvider>`. А затем создай кнопку в любом компоненте, чтобы проверить работу:
 
 ```tsx
-import { useContext } from 'react';
-import { UserContext } from '../context/UserContext';
-import styles from './Profile.module.css'; 
+import { useToast } from '../context/ToastContext';
 
-export default function Profile() {
-  // Читаем данные из контекста
-  const user = useContext(UserContext);
-
-  // Важный момент TypeScript: так как при создании контекста 
-  // мы указали <User | undefined>, TS заставит нас проверить это.
-  // Это защищает нас от ошибки, если мы забудем обернуть компонент в Provider.
-  if (!user) {
-    return <div>Ошибка: Компонент должен быть внутри UserContext.Provider</div>;
-  }
+export default function TestComponent() {
+  const { addToast } = useToast();
 
   return (
-    <div className={styles.profileCard}>
-      <h2>Привет, {user.name}!</h2>
-      <p>Твой уровень доступа: {user.role}</p>
+    <div style={{ padding: '20px', display: 'flex', gap: '10px' }}>
+      <button 
+        onClick={() => addToast('Товар добавлен в корзину!', 'success')}
+      >
+        Успех
+      </button>
+
+      <button 
+        onClick={() => addToast('Произошла ошибка при загрузке.', 'error')}
+      >
+        Ошибка
+      </button>
+
+      <button 
+        onClick={() => addToast('У вас новое сообщение.', 'info')}
+      >
+        Инфо
+      </button>
     </div>
   );
 }
@@ -136,8 +172,6 @@ export default function Profile() {
 
 ---
 
-**Твое задание для Урока 1:**
+### 🎉 Курс завершен!
 
-1. Создай эти два файла (`UserContext.ts` и `Profile.tsx`).
-2. Подключи их в `App.tsx` и убедись, что данные успешно отображаются на экране.
-3. Попробуй закомментировать `UserContext.Provider` в `App.tsx` (оставь только `<Profile/>`) — посмотри, как сработает наша TS-проверка `if (!user)` и выведет ошибку на экран.
+Ты прошел путь от базового `value` до сложных паттернов с `useReducer`, разделением контекстов на State/Dispatch и работой со стабильными ссылками. Теперь твой React-код стал намного чище и профессиональнее. Эти паттерны активно используются в современной Frontend-разработке.
