@@ -1,10 +1,7 @@
-import { Cart } from "@/components"
-import { CartProvider } from "./context"
+import { TestComponent } from "@/components"
 
 export const App = () => {
   return (
-    <CartProvider>
-      <Cart />
-    </CartProvider>
+    <TestComponent />
   )
 }

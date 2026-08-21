@@ -1,4 +1,4 @@
-import { useCart, type Product } from '@/context'
+import { useCartDispatch, useCartState, type Product } from '@/context'
 import styles from './cart.module.css'
 
 const MOCK_PRODUCTS: Product[] = [
@@ -7,7 +7,8 @@ const MOCK_PRODUCTS: Product[] = [
 ]
 
 export const Cart = () => {
-  const { state, dispatch } = useCart()
+  const state = useCartState()
+  const dispatch = useCartDispatch()
 
   return (
     <div className={styles.container}>

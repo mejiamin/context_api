@@ -39,110 +39,139 @@ npm run dev
 
 Когда `useState` перестает справляться. Мы интегрируем `useReducer` внутрь нашего провайдера для управления сложным состоянием (например, состоянием авторизации или корзины покупок) и типизируем все `actions` и `dispatch`.
 
-#### 👉 Урок 4: Оптимизация производительности и рендеров
+#### Урок 4: Оптимизация производительности и рендеров
 
 Главный минус Context API — лишние рендеры всех дочерних компонентов при изменении контекста. Мы разберем, как этого избежать: разделение одного контекста на два (State Context и Dispatch Context) и использование `useMemo`.
 
-#### Урок 5: Финальная практика (с CSS Modules)
+#### 👉 Урок 5: Финальная практика (с CSS Modules)
 
 Соберем небольшую фичу в твоем окружении, объединив всё вместе. Напишем глобальную систему уведомлений (Toasts) или корзину, стилизованную через твои CSS Modules, чтобы закрепить материал в условиях реального продакшена.
 
 ---
 
-## Урок 4: Оптимизация производительности и рендеров
+# Урок 5: Финальная практика (с CSS Modules)
 
-Главный минус Context API кроется в его механизме обновлений: **каждый раз, когда меняется `value` в Provider, перерисовываются ВСЕ дочерние компоненты, которые используют этот контекст.**
+Финал! Система уведомлений (Toasts) — это идеальная задача для Context API.
 
-В нашем Уроке 3 мы передавали в `value` единый объект: `value={{ state, dispatch }}`.
-Посмотри, что происходит при добавлении товара:
+Уведомления должны вызываться из **любой** точки приложения (например, из корзины или профиля), но при этом отрисовываться на **самом верхнем уровне** (поверх всего контента).
 
-1. Вызывается `dispatch`.
-2. `state` меняется.
-3. Провайдер создает *совершенно новый* объект `{ state, dispatch }`.
-4. React видит новое значение и перерендеривает всё, что вызывает `useCart()` — даже ту кнопку, которой нужен только `dispatch`, чтобы отправить экшен.
+Мы применим знания об оптимизации: наш провайдер будет отдавать только одну функцию `addToast`, и мы обернем её в `useCallback`, чтобы её ссылка никогда не менялась и компоненты не перерисовывались впустую.
 
-В масштабах реального приложения это сильно бьет по производительности. Решение, которое стало стандартом в React-разработке — **разделить контекст на два независимых**.
+## Шаг 1: Создаем контекст и провайдер с логикой
 
-## Шаг 1: Создаем два контекста вместо одного
-
-Открой свой `CartContext.tsx` и замени один общий контекст на `StateContext` и `DispatchContext`.
+Создай файл `ToastContext.tsx`. Здесь будет всё: типы, контекст, провайдер с состоянием и сам рендер всплывающих окон.
 
 ```tsx
-// Типы Product, CartState, CartAction и саму функцию cartReducer 
-// оставляем без изменений, они написаны идеально!
+import { 
+  createContext, 
+  useContext, 
+  useState, 
+  useCallback, 
+  ReactNode } from 'react';
+import styles from './Toast.module.css';
 
-// 1. Создаем ДВА раздельных контекста
-const CartStateContext = createContext<CartState | undefined>(undefined);
+// 1. Типы для наших уведомлений
+export type ToastType = 'success' | 'error' | 'info';
 
-// Тип для dispatch берем прямо из React
-const CartDispatchContext = 
-  createContext<React.Dispatch<CartAction> | undefined>(undefined);
-```
+export interface ToastMessage {
+  id: number;
+  text: string;
+  type: ToastType;
+}
 
-## Шаг 2: Вкладываем провайдеры друг в друга
+// 2. В контекст мы передаем ТОЛЬКО функцию добавления. 
+// Компонентам не нужно знать обо всех текущих уведомлениях, 
+// им нужно только уметь их создавать.
+interface ToastContextType {
+  addToast: (text: string, type?: ToastType) => void;
+}
 
-Теперь обновим компонент `CartProvider`.
-В React функция `dispatch` от хука `useReducer` **никогда не меняет свою ссылку** (она стабильна на протяжении всей жизни компонента). Это значит, что `CartDispatchContext` больше никогда не спровоцирует лишних рендеров!
+const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
-```tsx
-export const CartProvider = ({ children }: { children: ReactNode }) => {
-  const [state, dispatch] = useReducer(cartReducer, initialState);
+// 3. Провайдер
+export const ToastProvider = ({ children }: { children: ReactNode }) => {
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Используем useCallback, чтобы ссылка на функцию была стабильной
+  const addToast = useCallback((text: string, type: ToastType = 'info') => {
+    const id = Date.now();
+    
+    setToasts((prev) => [...prev, { id, text, type }]);
+
+    // Автоматически удаляем уведомление через 3 секунды
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, 3000);
+  }, []);
 
   return (
-    {/* Провайдер состояния будет вызывать рендеры 
-    только при изменении стейта */}
-    <CartStateContext.Provider value={state}>
-      {/* Провайдер диспетчера всегда стабилен */}
-      <CartDispatchContext.Provider value={dispatch}>
-        {children}
-      </CartDispatchContext.Provider>
-    </CartStateContext.Provider>
+    <ToastContext.Provider value={{ addToast }}>
+      {children}
+      
+      {/* 
+        Отрисовываем уведомления прямо в провайдере!
+        Они будут висеть поверх всех дочерних компонентов (children).
+      */}
+      <div className={styles.toastContainer}>
+        {toasts.map((toast) => (
+          <div 
+            key={toast.id} 
+            className={`${styles.toast} ${styles[toast.type]}`}
+          >
+            {toast.text}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
   );
 };
-```
 
-## Шаг 3: Разделяем кастомные хуки
-
-Вместо одного `useCart` мы делаем два узконаправленных хука. Так компоненты смогут подписываться только на то, что им действительно нужно.
-
-```tsx
-// Хук только для чтения данных (вызовет рендер при изменении корзины)
-export const useCartState = () => {
-  const context = useContext(CartStateContext);
+// 4. Наш любимый кастомный хук
+export const useToast = () => {
+  const context = useContext(ToastContext);
   if (!context) {
-    throw new Error('useCartState должен быть внутри CartProvider')
-  }
-  return context;
-};
-
-// Хук только для действий (НЕ вызовет рендер при обновлении стейта!)
-export const useCartDispatch = () => {
-  const context = useContext(CartDispatchContext);
-  if (!context) {
-    throw new Error('useCartDispatch должен быть внутри CartProvider')
+    throw new Error('useToast должен использоваться внутри ToastProvider');
   }
   return context;
 };
 ```
 
-## Шаг 4: Применяем в компонентах
+## Шаг 2: Тестируем в бою!
 
-Теперь в твоем `Cart.tsx` (или в любых других компонентах) ты берешь только то, что нужно:
+Оберни свое приложение в `App.tsx` в `<ToastProvider>`. А затем создай кнопку в любом компоненте, чтобы проверить работу:
 
 ```tsx
-// Где-то в компоненте со списком товаров:
-// Этот компонент больше НИКОГДА не перерисуется при изменении корзины!
-const dispatch = useCartDispatch();
+import { useToast } from '../context/ToastContext';
 
-// Где-то в компоненте самой корзины (справа сверху):
-// Этот компонент будет честно обновляться, когда меняется state.
-const state = useCartState();
+export default function TestComponent() {
+  const { addToast } = useToast();
+
+  return (
+    <div style={{ padding: '20px', display: 'flex', gap: '10px' }}>
+      <button 
+        onClick={() => addToast('Товар добавлен в корзину!', 'success')}
+      >
+        Успех
+      </button>
+
+      <button 
+        onClick={() => addToast('Произошла ошибка при загрузке.', 'error')}
+      >
+        Ошибка
+      </button>
+
+      <button 
+        onClick={() => addToast('У вас новое сообщение.', 'info')}
+      >
+        Инфо
+      </button>
+    </div>
+  );
+}
 ```
 
 ---
 
-**Твое задание для Урока 4:**
+### 🎉 Курс завершен!
 
-1. Отрефактори `CartContext.tsx`: разбей его на два контекста и два хука.
-2. Обнови код в своем `Cart.tsx`: удали старый `useCart` и достань `state` и `dispatch` через новые раздельные хуки.
-3. Проверь в браузере. Визуально всё должно работать абсолютно так же, как и раньше, но знай: теперь под капотом архитектура оптимизирована по стандартам серьезного продакшена.
+Ты прошел путь от базового `value` до сложных паттернов с `useReducer`, разделением контекстов на State/Dispatch и работой со стабильными ссылками. Теперь твой React-код стал намного чище и профессиональнее. Эти паттерны активно используются в современной Frontend-разработке.
